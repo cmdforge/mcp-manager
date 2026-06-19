@@ -1,0 +1,56 @@
+{
+  "name": "@cmdforge/mcp-manager",
+  "version": "0.0.2",
+  "type": "module",
+  "author": {
+    "name": "Fluttershy",
+    "url": "https://github.com/Fluttershy"
+  },
+  "description": "Manages MCP server listings and process management.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmdforge/mcp-manager.git"
+  },
+  "contributors": [
+    {
+      "name": "Fluttershy",
+      "url": "https://github.com/Fluttershy"
+    }
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/shared/index.d.ts",
+      "import": "./dist/shared/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "npm run build",
+    "test": "node --test --import tsx src/**/*.test.ts",
+    "generate": "npx -y openapi-typescript https://registry.modelcontextprotocol.io/openapi.yaml --root-types --root-types-no-schema-prefix -o ./src/shared/registry/api.ts"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0",
+    "vscode-jsonrpc": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.3",
+    "tsx": "4.22.4",
+    "typescript": "^5.8.0"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
