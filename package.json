@@ -31,6 +31,9 @@
       "import": "./dist/server/index.js"
     }
   },
+  "bin": {
+    "manage": "./dist/bin/manage.js"
+  },
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
@@ -39,10 +42,13 @@
   },
   "dependencies": {
     "openapi-fetch": "0.17.0",
-    "vscode-jsonrpc": "^9.0.0"
+    "vscode-jsonrpc": "^9.0.0",
+    "vscode-ws-jsonrpc": "^3.5.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "25.9.3",
+    "@types/ws": "^8.18.1",
     "tsx": "4.22.4",
     "typescript": "^5.8.0"
   },

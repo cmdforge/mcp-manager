@@ -42,20 +42,16 @@ test("protocol client exposes nested outbound APIs and registers inbound notific
   const connection = new FakeConnection();
   const seenReady: Array<{ count: number; loadedAt: string }> = [];
 
-  const client = protocol.client(connection, {
-    notifications: {
-      servers: {
-        official: {
-          ready(params: OfficialServersReadyParams) {
-            seenReady.push(params);
-          },
-        },
+  const client = protocol.client(connection, (peer) => {
+    peer.inbound.notifications.servers.official.ready(
+      (params: OfficialServersReadyParams) => {
+        seenReady.push(params);
       },
-    },
+    );
   });
 
-  await client.requests.servers.official.list();
-  await client.requests.servers.mcpjson.connect({
+  await client.outbound.requests.servers.official.list();
+  await client.outbound.requests.servers.mcpjson.connect({
     name: "example",
   });
 
@@ -93,28 +89,23 @@ test("protocol client exposes nested outbound APIs and registers inbound notific
 test("protocol server exposes nested outbound APIs and registers inbound requests", async () => {
   const connection = new FakeConnection();
 
-  const server = protocol.server(connection, {
-    requests: {
-      servers: {
-        official: {
-          async connect(params: OfficialServerConnectParams) {
-            return {
-              url: `ws://official/${params.name}/${params.target.type}/${params.target.index}`,
-            };
-          },
-        },
-        mcpjson: {
-          list() {
-            return {
-              servers: [],
-            };
-          },
-        },
+  const server = protocol.server(connection, (peer) => {
+    peer.inbound.requests.servers.official.connect(
+      async (params: OfficialServerConnectParams) => {
+        return {
+          url: `ws://official/${params.name}/${params.target.type}/${params.target.index}`,
+        };
       },
-    },
+    );
+
+    peer.inbound.requests.servers.mcpjson.list(() => {
+      return {
+        servers: [],
+      };
+    });
   });
 
-  server.notifications.servers.official.ready({
+  server.outbound.notifications.servers.official.ready({
     count: 2,
     loadedAt: "2026-06-18T00:00:00.000Z",
   });

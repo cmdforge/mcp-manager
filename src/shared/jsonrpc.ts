@@ -1,4 +1,5 @@
 import {
+  type Disposable,
   NotificationType,
   RequestType,
 } from "vscode-jsonrpc";
@@ -58,14 +59,6 @@ type Simplify<T> = {
   [K in keyof T]: T[K];
 } & {};
 
-type RecursivePartial<T> = T extends (...args: any[]) => any
-  ? T
-  : T extends object
-    ? {
-        [K in keyof T]?: RecursivePartial<T[K]>;
-      }
-    : T;
-
 type MethodToPath<Method extends string> =
   Method extends `${infer Head}/${infer Tail}`
     ? [Head, ...MethodToPath<Tail>]
@@ -97,6 +90,9 @@ type NotificationHandler<T> = T extends { readonly __kind?: "notification" }
   ? (...args: [NotificationParams<T>] extends [void] ? [] : [NotificationParams<T>]) => void | Promise<void>
   : never;
 
+type RequestRegistrar<T> = (handler: RequestHandler<T>) => Disposable | void;
+type NotificationRegistrar<T> = (handler: NotificationHandler<T>) => Disposable | void;
+
 type PathTree<Path extends string[], Leaf> =
   Path extends [infer Head extends string, ...infer Tail extends string[]]
     ? {
@@ -117,7 +113,9 @@ type RequestMembersToTree<
               Members[K] extends AnyRequest
                 ? Leaf extends "sender"
                   ? Sender<Members[K]>
-                  : RequestHandler<Members[K]>
+                  : Leaf extends "registrar"
+                    ? RequestRegistrar<Members[K]>
+                    : RequestHandler<Members[K]>
                 : never
             >
           : never;
@@ -138,7 +136,9 @@ type NotificationMembersToTree<
               Members[K] extends AnyNotification
                 ? Leaf extends "sender"
                   ? Sender<Members[K]>
-                  : NotificationHandler<Members[K]>
+                  : Leaf extends "registrar"
+                    ? NotificationRegistrar<Members[K]>
+                    : NotificationHandler<Members[K]>
                 : never
             >
           : never;
@@ -166,6 +166,18 @@ export type RequestHandlerTree<Members extends Record<string, AnyRequest>> = Req
 export type NotificationHandlerTree<Members extends Record<string, AnyNotification>> = NotificationMembersToTree<
   Members,
   "handler"
+>;
+
+export type RequestRegistrarTree<Members extends Record<string, AnyRequest>> = RequestMembersToTree<
+  Members,
+  "registrar"
+>;
+
+export type NotificationRegistrarTree<
+  Members extends Record<string, AnyNotification>,
+> = NotificationMembersToTree<
+  Members,
+  "registrar"
 >;
 
 type OutboundRequests<
@@ -199,19 +211,11 @@ type InboundNotifications<
 export interface JsonRpcConnectionLike {
   sendRequest<R>(type: { method: string }, ...params: unknown[]): Promise<R>;
   sendNotification(type: { method: string }, ...params: unknown[]): void;
-  onRequest(type: { method: string }, handler: (...params: unknown[]) => unknown): void;
-  onNotification(type: { method: string }, handler: (...params: unknown[]) => void): void;
+  onRequest(type: { method: string }, handler: (...params: unknown[]) => unknown): Disposable | void;
+  onNotification(type: { method: string }, handler: (...params: unknown[]) => void): Disposable | void;
 }
 
-export interface ProtocolHandlers<
-  Definition extends ProtocolDefinition,
-  Role extends "client" | "server",
-> {
-  requests?: RecursivePartial<RequestHandlerTree<InboundRequests<Definition, Role>>>;
-  notifications?: RecursivePartial<NotificationHandlerTree<InboundNotifications<Definition, Role>>>;
-}
-
-export interface ProtocolPeer<
+export interface ProtocolOutbound<
   Definition extends ProtocolDefinition,
   Role extends "client" | "server",
 > {
@@ -219,19 +223,54 @@ export interface ProtocolPeer<
   notifications: NotificationSenderTree<OutboundNotifications<Definition, Role>>;
 }
 
+export interface ProtocolInbound<
+  Definition extends ProtocolDefinition,
+  Role extends "client" | "server",
+> {
+  requests: RequestRegistrarTree<InboundRequests<Definition, Role>>;
+  notifications: NotificationRegistrarTree<InboundNotifications<Definition, Role>>;
+}
+
+export class ProtocolPeer<
+  Definition extends ProtocolDefinition,
+  Role extends "client" | "server",
+> {
+  readonly protocol: ProtocolInstance<Definition>;
+  readonly connection: JsonRpcConnectionLike;
+  readonly outbound: ProtocolOutbound<Definition, Role>;
+  readonly inbound: ProtocolInbound<Definition, Role>;
+
+  constructor(
+    protocol: ProtocolInstance<Definition>,
+    connection: JsonRpcConnectionLike,
+    outbound: ProtocolOutbound<Definition, Role>,
+    inbound: ProtocolInbound<Definition, Role>,
+  ) {
+    this.protocol = protocol;
+    this.connection = connection;
+    this.outbound = outbound;
+    this.inbound = inbound;
+  }
+}
+
+export type ProtocolInitializer<
+  Definition extends ProtocolDefinition,
+  Role extends "client" | "server",
+> = (peer: ProtocolPeer<Definition, Role>) => void;
+
 export type ProtocolInstance<Definition extends ProtocolDefinition> = Definition & {
   client(
     connection: JsonRpcConnectionLike,
-    handlers?: ProtocolHandlers<Definition, "client">,
+    initialize?: ProtocolInitializer<Definition, "client">,
   ): ProtocolPeer<Definition, "client">;
   server(
     connection: JsonRpcConnectionLike,
-    handlers?: ProtocolHandlers<Definition, "server">,
+    initialize?: ProtocolInitializer<Definition, "server">,
   ): ProtocolPeer<Definition, "server">;
 };
 
 export function request<const Method extends string>(method: Method) {
-  return function defineRequest<Params = void, Result = void, Error = void>() {
+  return function defineRequest<Params = undefined, Result = void, Error = undefined>() {
     return new RequestType<Params, Result, Error>(method) as ProtocolRequest<
       Method,
       Params,
@@ -242,7 +281,7 @@ export function request<const Method extends string>(method: Method) {
 }
 
 export function notification<const Method extends string>(method: Method) {
-  return function defineNotification<Params = void>() {
+  return function defineNotification<Params = undefined>() {
     return new NotificationType<Params>(method) as ProtocolNotification<Method, Params>;
   };
 }
@@ -270,23 +309,33 @@ export function createProtocol<const Definition extends ProtocolDefinition>(
       : definitionOrFactory,
   );
 
-  return {
+  const instance = {
     ...resolvedDefinition,
-    client(connection, handlers) {
-      bindHandlers(connection, inboundFor(resolvedDefinition, "client"), handlers);
-      return createPeer(connection, outboundFor(resolvedDefinition, "client")) as ProtocolPeer<
-        Definition,
-        "client"
-      >;
+    client(connection, initialize) {
+      const peer = createPeer(
+        instance as ProtocolInstance<Definition>,
+        connection,
+        "client",
+        outboundFor(resolvedDefinition, "client"),
+        inboundFor(resolvedDefinition, "client"),
+      ) as ProtocolPeer<Definition, "client">;
+      initialize?.(peer);
+      return peer;
     },
-    server(connection, handlers) {
-      bindHandlers(connection, inboundFor(resolvedDefinition, "server"), handlers);
-      return createPeer(connection, outboundFor(resolvedDefinition, "server")) as ProtocolPeer<
-        Definition,
-        "server"
-      >;
+    server(connection, initialize) {
+      const peer = createPeer(
+        instance as ProtocolInstance<Definition>,
+        connection,
+        "server",
+        outboundFor(resolvedDefinition, "server"),
+        inboundFor(resolvedDefinition, "server"),
+      ) as ProtocolPeer<Definition, "server">;
+      initialize?.(peer);
+      return peer;
     },
   } as ProtocolInstance<Definition>;
+
+  return instance;
 }
 
 function outboundFor(definition: ProtocolDefinition, role: "client" | "server") {
@@ -354,36 +403,14 @@ function normalizeProtocolDefinition(definition: ProtocolDefinition): ProtocolDe
   };
 }
 
-function bindHandlers(
-  connection: JsonRpcConnectionLike,
-  inbound: ProtocolDirection,
-  handlers?: {
-    requests?: Record<string, unknown>;
-    notifications?: Record<string, unknown>;
-  },
-) {
-  for (const definition of Object.values(inbound.requests || {})) {
-    const handler = getByMethodPath(handlers?.requests, definition.method);
-    if (typeof handler === "function") {
-      connection.onRequest(definition, (...params) => handler(...params));
-    }
-  }
-
-  for (const definition of Object.values(inbound.notifications || {})) {
-    const handler = getByMethodPath(handlers?.notifications, definition.method);
-    if (typeof handler === "function") {
-      connection.onNotification(definition, (...params) => {
-        void handler(...params);
-      });
-    }
-  }
-}
-
 function createPeer(
+  protocol: ProtocolInstance<any>,
   connection: JsonRpcConnectionLike,
+  role: "client" | "server",
   outbound: ProtocolDirection,
+  inbound: ProtocolDirection,
 ) {
-  return {
+  const outboundApi = {
     requests: createTree(
       Object.values(outbound.requests || {}),
       (definition) => (...params: unknown[]) => connection.sendRequest(definition, ...params),
@@ -393,6 +420,28 @@ function createPeer(
       (definition) => (...params: unknown[]) => connection.sendNotification(definition, ...params),
     ),
   };
+
+  const inboundApi = {
+    requests: createTree(
+      Object.values(inbound.requests || {}),
+      (definition) => (handler: (...params: unknown[]) => unknown) =>
+        connection.onRequest(definition, (...params) => handler(...params)),
+    ),
+    notifications: createTree(
+      Object.values(inbound.notifications || {}),
+      (definition) => (handler: (...params: unknown[]) => void) =>
+        connection.onNotification(definition, (...params) => {
+          void handler(...params);
+        }),
+    ),
+  };
+
+  return new ProtocolPeer(
+    protocol,
+    connection,
+    outboundApi as ProtocolOutbound<any, any>,
+    inboundApi as ProtocolInbound<any, any>,
+  );
 }
 
 function createTree<T extends AnyProtocolMember>(
@@ -414,20 +463,6 @@ function createTree<T extends AnyProtocolMember>(
   }
 
   return root;
-}
-
-function getByMethodPath(value: unknown, method: string) {
-  let cursor = value;
-
-  for (const segment of method.split("/")) {
-    if (!cursor || typeof cursor !== "object") {
-      return undefined;
-    }
-
-    cursor = (cursor as Record<string, unknown>)[segment];
-  }
-
-  return cursor;
 }
 
 export type InferRequestParams<T extends AnyRequest> = RequestParams<T>;
