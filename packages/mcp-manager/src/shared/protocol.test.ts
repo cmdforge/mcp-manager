@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { JsonRpcConnectionLike } from "./jsonrpc.js";
+import type { JsonRpcConnectionLike } from "@cmdforge/jsonrpc";
 import {
   protocol,
+  type ConnectServersParams,
+  type ListServersParams,
   type OfficialServerConnectParams,
   type OfficialServersReadyParams,
 } from "./protocol.js";
@@ -50,12 +52,36 @@ test("protocol client exposes nested outbound APIs and registers inbound notific
     );
   });
 
+  await client.outbound.requests.servers.list({
+    type: "official",
+  });
+  await client.outbound.requests.servers.connect({
+    type: "mcpjson",
+    name: "example",
+  });
   await client.outbound.requests.servers.official.list();
   await client.outbound.requests.servers.mcpjson.connect({
     name: "example",
   });
 
   assert.deepEqual(connection.sentRequests, [
+    {
+      method: "servers/list",
+      params: [
+        {
+          type: "official",
+        },
+      ],
+    },
+    {
+      method: "servers/connect",
+      params: [
+        {
+          type: "mcpjson",
+          name: "example",
+        },
+      ],
+    },
     {
       method: "servers/official/list",
       params: [],
@@ -90,6 +116,34 @@ test("protocol server exposes nested outbound APIs and registers inbound request
   const connection = new FakeConnection();
 
   const server = protocol.server(connection, (peer) => {
+    peer.inbound.requests.servers.list(
+      async (params: ListServersParams) => {
+        if (params.type === "official") {
+          return {
+            type: "official" as const,
+            ready: true as const,
+            count: 1,
+            loadedAt: "2026-06-18T00:00:00.000Z",
+            servers: [],
+          };
+        }
+
+        return {
+          type: "mcpjson" as const,
+          servers: [],
+        };
+      },
+    );
+
+    peer.inbound.requests.servers.connect(
+      async (params: ConnectServersParams) => {
+        return {
+          type: params.type,
+          url: `ws://${params.type}/${params.name}`,
+        };
+      },
+    );
+
     peer.inbound.requests.servers.official.connect(
       async (params: OfficialServerConnectParams) => {
         return {
@@ -135,6 +189,34 @@ test("protocol server exposes nested outbound APIs and registers inbound request
 
   assert.deepEqual(officialConnectResult, {
     url: "ws://official/io.github.user/weather/remote/1",
+  });
+
+  const listServers = connection.requests.get("servers/list");
+  assert.ok(listServers);
+
+  const listServersResult = await listServers({
+    type: "official",
+  });
+
+  assert.deepEqual(listServersResult, {
+    type: "official",
+    ready: true,
+    count: 1,
+    loadedAt: "2026-06-18T00:00:00.000Z",
+    servers: [],
+  });
+
+  const connectServers = connection.requests.get("servers/connect");
+  assert.ok(connectServers);
+
+  const connectServersResult = await connectServers({
+    type: "mcpjson",
+    name: "example",
+  });
+
+  assert.deepEqual(connectServersResult, {
+    type: "mcpjson",
+    url: "ws://mcpjson/example",
   });
 
   const mcpjsonList = connection.requests.get("servers/mcpjson/list");

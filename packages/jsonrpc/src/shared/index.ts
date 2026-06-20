@@ -1,7 +1,9 @@
 import {
   type Disposable,
+  ErrorCodes,
   NotificationType,
   RequestType,
+  ResponseError,
 } from "vscode-jsonrpc";
 
 export type ProtocolRequest<
@@ -12,9 +14,9 @@ export type ProtocolRequest<
 > = RequestType<Params, Result, Error> & {
   readonly method: Method;
   readonly __kind?: "request";
-  readonly __params?: Params;
-  readonly __result?: Result;
-  readonly __error?: Error;
+  readonly __params: Params;
+  readonly __result: Result;
+  readonly __error: Error;
 };
 
 export type ProtocolNotification<
@@ -23,7 +25,7 @@ export type ProtocolNotification<
 > = NotificationType<Params> & {
   readonly method: Method;
   readonly __kind?: "notification";
-  readonly __params?: Params;
+  readonly __params: Params;
 };
 
 export type ProtocolDefinition = {
@@ -43,17 +45,17 @@ type AnyProtocolMember = AnyRequest | AnyNotification;
 
 type RequestsOf<Direction extends ProtocolDirection> =
   Direction["requests"] extends Record<string, AnyRequest>
-    ? Direction["requests"]
-    : {};
+  ? Direction["requests"]
+  : {};
 type NotificationsOf<Direction extends ProtocolDirection> =
   Direction["notifications"] extends Record<string, AnyNotification>
-    ? Direction["notifications"]
-    : {};
+  ? Direction["notifications"]
+  : {};
 
 type UnionToIntersection<U> =
   (U extends unknown ? (arg: U) => void : never) extends ((arg: infer I) => void)
-    ? I
-    : never;
+  ? I
+  : never;
 
 type Simplify<T> = {
   [K in keyof T]: T[K];
@@ -61,33 +63,47 @@ type Simplify<T> = {
 
 type MethodToPath<Method extends string> =
   Method extends `${infer Head}/${infer Tail}`
-    ? [Head, ...MethodToPath<Tail>]
-    : [Method];
+  ? [Head, ...MethodToPath<Tail>]
+  : [Method];
 
-type RequestParams<T> = T extends { readonly __params?: infer Params }
+type RequestParams<T> = T extends { readonly __params: infer Params }
   ? Params
   : never;
 
-type RequestResult<T> = T extends { readonly __result?: infer Result }
+type RequestResult<T> = T extends { readonly __result: infer Result }
   ? Result
   : never;
 
-type NotificationParams<T> = T extends { readonly __params?: infer Params }
+type NotificationParams<T> = T extends { readonly __params: infer Params }
   ? Params
   : never;
 
+type ArgValue<Params> = Exclude<Params, void | undefined>;
+type HasOptionalArg<Params> =
+  [undefined] extends [Params]
+    ? true
+    : [void] extends [Params]
+      ? true
+      : false;
+type Args<Params> =
+  [ArgValue<Params>] extends [never]
+    ? []
+    : HasOptionalArg<Params> extends true
+      ? [] | [ArgValue<Params>]
+      : [Params];
+
 type Sender<T> = T extends { readonly __kind?: "request" }
-  ? (...args: [RequestParams<T>] extends [void] ? [] : [RequestParams<T>]) => Promise<RequestResult<T>>
+  ? (...args: Args<RequestParams<T>>) => Promise<RequestResult<T>>
   : T extends { readonly __kind?: "notification" }
-    ? (...args: [NotificationParams<T>] extends [void] ? [] : [NotificationParams<T>]) => void
-    : never;
+  ? (...args: Args<NotificationParams<T>>) => void
+  : never;
 
 type RequestHandler<T> = T extends { readonly __kind?: "request" }
-  ? (...args: [RequestParams<T>] extends [void] ? [] : [RequestParams<T>]) => RequestResult<T> | Promise<RequestResult<T>>
+  ? (...args: Args<RequestParams<T>>) => RequestResult<T> | Promise<RequestResult<T>>
   : never;
 
 type NotificationHandler<T> = T extends { readonly __kind?: "notification" }
-  ? (...args: [NotificationParams<T>] extends [void] ? [] : [NotificationParams<T>]) => void | Promise<void>
+  ? (...args: Args<NotificationParams<T>>) => void | Promise<void>
   : never;
 
 type RequestRegistrar<T> = (handler: RequestHandler<T>) => Disposable | void;
@@ -95,10 +111,10 @@ type NotificationRegistrar<T> = (handler: NotificationHandler<T>) => Disposable 
 
 type PathTree<Path extends string[], Leaf> =
   Path extends [infer Head extends string, ...infer Tail extends string[]]
-    ? {
-        [K in Head]: Tail extends [] ? Leaf : PathTree<Tail, Leaf>;
-      }
-    : never;
+  ? {
+    [K in Head]: Tail extends [] ? Leaf : PathTree<Tail, Leaf>;
+  }
+  : never;
 
 type RequestMembersToTree<
   Members extends Record<string, AnyRequest>,
@@ -107,18 +123,18 @@ type RequestMembersToTree<
   UnionToIntersection<
     {
       [K in keyof Members]:
+      Members[K] extends AnyRequest
+      ? PathTree<
+        MethodToPath<Members[K]["method"]>,
         Members[K] extends AnyRequest
-          ? PathTree<
-              MethodToPath<Members[K]["method"]>,
-              Members[K] extends AnyRequest
-                ? Leaf extends "sender"
-                  ? Sender<Members[K]>
-                  : Leaf extends "registrar"
-                    ? RequestRegistrar<Members[K]>
-                    : RequestHandler<Members[K]>
-                : never
-            >
-          : never;
+        ? Leaf extends "sender"
+        ? Sender<Members[K]>
+        : Leaf extends "registrar"
+        ? RequestRegistrar<Members[K]>
+        : RequestHandler<Members[K]>
+        : never
+      >
+      : never;
     }[keyof Members]
   >
 >;
@@ -130,18 +146,18 @@ type NotificationMembersToTree<
   UnionToIntersection<
     {
       [K in keyof Members]:
+      Members[K] extends AnyNotification
+      ? PathTree<
+        MethodToPath<Members[K]["method"]>,
         Members[K] extends AnyNotification
-          ? PathTree<
-              MethodToPath<Members[K]["method"]>,
-              Members[K] extends AnyNotification
-                ? Leaf extends "sender"
-                  ? Sender<Members[K]>
-                  : Leaf extends "registrar"
-                    ? NotificationRegistrar<Members[K]>
-                    : NotificationHandler<Members[K]>
-                : never
-            >
-          : never;
+        ? Leaf extends "sender"
+        ? Sender<Members[K]>
+        : Leaf extends "registrar"
+        ? NotificationRegistrar<Members[K]>
+        : NotificationHandler<Members[K]>
+        : never
+      >
+      : never;
     }[keyof Members]
   >
 >;
@@ -286,6 +302,21 @@ export function notification<const Method extends string>(method: Method) {
   };
 }
 
+export function jsonrpcError<Data = unknown>(
+  code: number,
+  message: string,
+  data?: Data,
+) {
+  return new ResponseError<Data>(code, message, data);
+}
+
+export function invalidParamsError<Data = unknown>(
+  data?: Data,
+  message = "Invalid params",
+) {
+  return jsonrpcError(ErrorCodes.InvalidParams, message, data);
+}
+
 export interface ProtocolFactories {
   request: typeof request;
   notification: typeof notification;
@@ -303,9 +334,9 @@ export function createProtocol<const Definition extends ProtocolDefinition>(
   const resolvedDefinition = normalizeProtocolDefinition(
     typeof definitionOrFactory === "function"
       ? definitionOrFactory({
-          request,
-          notification,
-        })
+        request,
+        notification,
+      })
       : definitionOrFactory,
   );
 
@@ -341,49 +372,49 @@ export function createProtocol<const Definition extends ProtocolDefinition>(
 function outboundFor(definition: ProtocolDefinition, role: "client" | "server") {
   return role === "client"
     ? {
-        requests: {
-          ...(definition.clientToServer.requests || {}),
-          ...(definition.bidirectional.requests || {}),
-        },
-        notifications: {
-          ...(definition.clientToServer.notifications || {}),
-          ...(definition.bidirectional.notifications || {}),
-        },
-      }
+      requests: {
+        ...(definition.clientToServer.requests || {}),
+        ...(definition.bidirectional.requests || {}),
+      },
+      notifications: {
+        ...(definition.clientToServer.notifications || {}),
+        ...(definition.bidirectional.notifications || {}),
+      },
+    }
     : {
-        requests: {
-          ...(definition.serverToClient.requests || {}),
-          ...(definition.bidirectional.requests || {}),
-        },
-        notifications: {
-          ...(definition.serverToClient.notifications || {}),
-          ...(definition.bidirectional.notifications || {}),
-        },
-      };
+      requests: {
+        ...(definition.serverToClient.requests || {}),
+        ...(definition.bidirectional.requests || {}),
+      },
+      notifications: {
+        ...(definition.serverToClient.notifications || {}),
+        ...(definition.bidirectional.notifications || {}),
+      },
+    };
 }
 
 function inboundFor(definition: ProtocolDefinition, role: "client" | "server") {
   return role === "client"
     ? {
-        requests: {
-          ...(definition.serverToClient.requests || {}),
-          ...(definition.bidirectional.requests || {}),
-        },
-        notifications: {
-          ...(definition.serverToClient.notifications || {}),
-          ...(definition.bidirectional.notifications || {}),
-        },
-      }
+      requests: {
+        ...(definition.serverToClient.requests || {}),
+        ...(definition.bidirectional.requests || {}),
+      },
+      notifications: {
+        ...(definition.serverToClient.notifications || {}),
+        ...(definition.bidirectional.notifications || {}),
+      },
+    }
     : {
-        requests: {
-          ...(definition.clientToServer.requests || {}),
-          ...(definition.bidirectional.requests || {}),
-        },
-        notifications: {
-          ...(definition.clientToServer.notifications || {}),
-          ...(definition.bidirectional.notifications || {}),
-        },
-      };
+      requests: {
+        ...(definition.clientToServer.requests || {}),
+        ...(definition.bidirectional.requests || {}),
+      },
+      notifications: {
+        ...(definition.clientToServer.notifications || {}),
+        ...(definition.bidirectional.notifications || {}),
+      },
+    };
 }
 
 function normalizeProtocolDefinition(definition: ProtocolDefinition): ProtocolDefinition {

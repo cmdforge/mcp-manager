@@ -3,11 +3,13 @@ import type {
   ProtocolInitializer,
   ProtocolInstance,
   ProtocolPeer,
-} from "../shared/jsonrpc.js";
+} from "../shared/index.js";
 import {
   createWebSocketClient,
   type CreateWebSocketClientOptions,
 } from "./createWebSocketClient.js";
+
+export type { CreateWebSocketClientOptions } from "./createWebSocketClient.js";
 
 export interface ClientFactory<Definition extends ProtocolDefinition> {
   readonly protocol: ProtocolInstance<Definition>;
@@ -18,7 +20,7 @@ export interface ClientFactory<Definition extends ProtocolDefinition> {
   ): Promise<ProtocolPeer<Definition, "client">>;
 }
 
-export function createClient<Definition extends ProtocolDefinition>(
+export function createClientFactory<Definition extends ProtocolDefinition>(
   protocol: ProtocolInstance<Definition>,
   initialize?: ProtocolInitializer<Definition, "client">,
 ): ClientFactory<Definition> {

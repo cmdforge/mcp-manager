@@ -6,8 +6,14 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-export async function getAllServers() {
-  const dir = path.join(os.homedir(), '.cmdforge/mcp-manager');
+export interface GetAllServersOptions {
+  cacheDir?: string;
+  client?: Pick<typeof registryClient, "GET">;
+}
+
+export async function getAllServers(options: GetAllServersOptions = {}) {
+  const client = options.client ?? registryClient;
+  const dir = options.cacheDir ?? path.join(os.homedir(), '.cmdforge/mcp-manager');
   const file = path.join(dir, 'registry.json');
   const servers: ServerListResponse['servers'] = [];
 
@@ -18,7 +24,7 @@ export async function getAllServers() {
 
   let cursor: string | undefined;
   do {
-    const { data, error } = await registryClient.GET('/v0.1/servers', {
+    const { data, error } = await client.GET('/v0.1/servers', {
       params: {
         query: {
           limit: 100,
@@ -36,7 +42,6 @@ export async function getAllServers() {
 
   await mkdir(dir, { recursive: true });
   await writeFile(file, JSON.stringify(servers, null, 2));
-  console.log(`cached ${servers.length} servers...`);
 
   return servers;
 }

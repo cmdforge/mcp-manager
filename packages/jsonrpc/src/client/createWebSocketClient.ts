@@ -7,14 +7,13 @@ import {
   WebSocketMessageReader,
   WebSocketMessageWriter,
 } from "vscode-ws-jsonrpc";
-import NodeWebSocket from "ws";
 import type {
   JsonRpcConnectionLike,
   ProtocolDefinition,
   ProtocolInitializer,
   ProtocolInstance,
   ProtocolPeer,
-} from "../shared/jsonrpc.js";
+} from "../shared/index.js";
 
 export interface CreateWebSocketClientOptions {
   logger?: Logger;
@@ -29,7 +28,7 @@ export async function createWebSocketClient<
   initialize?: ProtocolInitializer<Definition, "client">,
   options: CreateWebSocketClientOptions = {},
 ): Promise<ProtocolPeer<Definition, "client">> {
-  const WebSocketConstructor = resolveWebSocketConstructor(options);
+  const WebSocketConstructor = await resolveWebSocketConstructor(options);
 
   return await new Promise((resolve, reject) => {
     const webSocket = new WebSocketConstructor(url);
@@ -47,9 +46,9 @@ export async function createWebSocketClient<
     webSocket.onerror = (event) => {
       const message =
         typeof event === "object" &&
-        event &&
-        "message" in event &&
-        typeof event.message === "string"
+          event &&
+          "message" in event &&
+          typeof event.message === "string"
           ? event.message
           : `failed to connect to ${url}`;
 
@@ -59,7 +58,7 @@ export async function createWebSocketClient<
     webSocket.onclose = (event) => {
       rejectOnce(
         new Error(
-          `websocket closed before JSON-RPC connection was established (${event.code}: ${event.reason})`,
+          `ws closed before JSON-RPC connection was established (${event.code}: ${event.reason})`,
         ),
       );
     };
@@ -86,9 +85,9 @@ export async function createWebSocketClient<
   });
 }
 
-function resolveWebSocketConstructor(
+async function resolveWebSocketConstructor(
   options: CreateWebSocketClientOptions,
-): typeof WebSocket {
+): Promise<typeof WebSocket> {
   if (options.WebSocket) {
     return options.WebSocket;
   }
@@ -97,5 +96,6 @@ function resolveWebSocketConstructor(
     return WebSocket;
   }
 
-  return NodeWebSocket as unknown as typeof WebSocket;
+  const module = await import("ws");
+  return module.default as unknown as typeof WebSocket;
 }

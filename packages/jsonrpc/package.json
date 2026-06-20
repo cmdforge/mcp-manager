@@ -1,0 +1,50 @@
+{
+  "name": "@cmdforge/jsonrpc",
+  "version": "0.0.2",
+  "license": "MIT",
+  "type": "module",
+  "author": {
+    "name": "Fluttershy",
+    "url": "https://github.com/Fluttershy"
+  },
+  "description": "Manages MCP server listings and process management.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cmdforge/mcp-manager.git"
+  },
+  "contributors": [
+    {
+      "name": "Fluttershy",
+      "url": "https://github.com/Fluttershy"
+    }
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/shared/index.d.ts",
+      "import": "./dist/shared/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --import tsx src/**/*.test.ts"
+  },
+  "dependencies": {
+    "vscode-jsonrpc": "^9.0.0",
+    "vscode-ws-jsonrpc": "^3.5.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

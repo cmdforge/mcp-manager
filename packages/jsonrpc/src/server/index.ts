@@ -17,7 +17,7 @@ import type {
   ProtocolInitializer,
   ProtocolInstance,
   ProtocolPeer,
-} from "../shared/jsonrpc.js";
+} from "../shared/index.js";
 
 export interface ServerFactory<Definition extends ProtocolDefinition> {
   readonly protocol: ProtocolInstance<Definition>;
@@ -49,12 +49,11 @@ export interface StartedWebSocketServer<
 > {
   readonly server: WebSocketServer;
   readonly url: string;
-  readonly peer: Promise<ProtocolPeer<Definition, "server">>;
   readonly closed: Promise<void>;
   close(): Promise<void>;
 }
 
-export function createServer<Definition extends ProtocolDefinition>(
+export function createServerFactory<Definition extends ProtocolDefinition>(
   protocol: ProtocolInstance<Definition>,
   initialize?: ProtocolInitializer<Definition, "server">,
 ): ServerFactory<Definition> {
@@ -86,16 +85,8 @@ export function createServer<Definition extends ProtocolDefinition>(
         port: options.port,
       });
 
-      let activeSocket: WebSocket | undefined;
       let closedResolved = false;
       let closeServerPromise: Promise<void> | undefined;
-
-      let resolvePeer!: (peer: ProtocolPeer<Definition, "server">) => void;
-      let rejectPeer!: (reason: unknown) => void;
-      const peer = new Promise<ProtocolPeer<Definition, "server">>((resolve, reject) => {
-        resolvePeer = resolve;
-        rejectPeer = reject;
-      });
 
       let resolveClosed!: () => void;
       const closed = new Promise<void>((resolve) => {
@@ -110,16 +101,10 @@ export function createServer<Definition extends ProtocolDefinition>(
       });
 
       server.once("close", () => {
-        if (!activeSocket) {
-          rejectPeer(new Error("websocket server closed before a client connected"));
-        }
         resolveClosed();
       });
 
-      server.once("error", (error) => {
-        if (!activeSocket) {
-          rejectPeer(error);
-        }
+      server.once("error", () => {
         resolveClosed();
       });
 
@@ -143,29 +128,10 @@ export function createServer<Definition extends ProtocolDefinition>(
       };
 
       server.on("connection", (webSocket) => {
-        if (activeSocket) {
-          webSocket.close(1013, "mcp-manager only accepts one websocket session");
-          return;
-        }
-
-        activeSocket = webSocket;
-
-        webSocket.once("close", () => {
-          resolveClosed();
-        });
-
-        webSocket.once("error", () => {
-          resolveClosed();
-        });
-
-        void closeServer();
-
         try {
           const acceptedPeer = this.acceptWebSocket(webSocket, options);
           options.onPeer?.(acceptedPeer);
-          resolvePeer(acceptedPeer);
         } catch (error) {
-          rejectPeer(error);
           webSocket.close(1011, "failed to initialize websocket session");
         }
       });
@@ -186,11 +152,12 @@ export function createServer<Definition extends ProtocolDefinition>(
       return {
         server,
         url: `ws://${host}:${address.port}${path}`,
-        peer,
         closed,
         close() {
-          if (activeSocket && activeSocket.readyState < activeSocket.CLOSING) {
-            activeSocket.close();
+          for (const client of server.clients) {
+            if (client.readyState < client.CLOSING) {
+              client.close();
+            }
           }
 
           return closeServer();

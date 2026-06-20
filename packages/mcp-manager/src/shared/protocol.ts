@@ -4,9 +4,9 @@ import type {
 } from "./registry/index.js";
 import {
   createProtocol,
-} from "./jsonrpc.js";
+} from "@cmdforge/jsonrpc";
 
-export type ServerType = "official" | "mcp.json";
+export type ServerType = "official" | "mcpjson";
 
 export type OfficialServerName = ServerResponse["server"]["name"];
 export type McpJsonServerName = ServerJson["name"];
@@ -24,12 +24,19 @@ export interface OfficialServersReadyResult {
   ready: true;
   count: number;
   loadedAt: string;
+  nextCursor?: string;
   servers: ServerResponse[];
 }
 
 export type OfficialServersListResult =
   | OfficialServersNotReadyResult
   | OfficialServersReadyResult;
+
+export interface OfficialServersListParams {
+  category?: string;
+  cursor?: string;
+  search?: string;
+}
 
 export interface McpJsonServersListResult {
   servers: ServerJson[];
@@ -41,13 +48,13 @@ export interface McpJsonServersChangedParams {
 
 export type OfficialServerConnectTarget =
   | {
-      type: "remote";
-      index: number;
-    }
+    type: "remote";
+    index: number;
+  }
   | {
-      type: "package";
-      index: number;
-    };
+    type: "package";
+    index: number;
+  };
 
 export interface OfficialServerConnectParams {
   name: OfficialServerName;
@@ -62,6 +69,38 @@ export interface ConnectServerResult {
   url: string;
 }
 
+export type ListServersParams =
+  | ({
+    type: "official";
+  } & OfficialServersListParams)
+  | {
+    type: "mcpjson";
+  };
+
+export type ListServersResult =
+  | ({
+    type: "official";
+  } & OfficialServersListResult)
+  | ({
+    type: "mcpjson";
+  } & McpJsonServersListResult);
+
+export type ConnectServersParams =
+  | ({
+    type: "official";
+  } & OfficialServerConnectParams)
+  | ({
+    type: "mcpjson";
+  } & McpJsonServerConnectParams);
+
+export type ConnectServersResult =
+  | ({
+    type: "official";
+  } & ConnectServerResult)
+  | ({
+    type: "mcpjson";
+  } & ConnectServerResult);
+
 export interface AddMcpJsonServerParams {
   server: ServerJson;
 }
@@ -73,8 +112,16 @@ export interface RemoveMcpJsonServerParams {
 export const protocol = createProtocol(({ request, notification }) => ({
   clientToServer: {
     requests: {
+      listServers: request("servers/list")<
+        ListServersParams,
+        ListServersResult
+      >(),
+      connectServer: request("servers/connect")<
+        ConnectServersParams,
+        ConnectServersResult
+      >(),
       listOfficialServers: request("servers/official/list")<
-        void,
+        OfficialServersListParams | undefined,
         OfficialServersListResult
       >(),
       connectOfficialServer: request("servers/official/connect")<
